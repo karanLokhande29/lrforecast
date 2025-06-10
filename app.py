@@ -81,8 +81,12 @@ if uploaded_file:
             int(summary_df["Total_Forecast_30d"].min())
         )
 
-        show_top_growth = st.checkbox("📌 Top 10 by Growth %", False)
-        show_top_forecast = st.checkbox("🚀 Top 10 by Forecast Volume", False)
+        sort_option = st.selectbox(
+            "📊 Sort By",
+            ["None", "Top Gainers (Growth %)", "Top Losers (Growth %)", "Top Forecast (30 Days)"]
+        )
+
+        top_n = st.slider("🔢 Number of Top Entries", min_value=5, max_value=100, value=10, step=5)
 
         filtered_df = summary_df[
             (summary_df["Alert"].isin(alert_filter)) &
@@ -95,10 +99,12 @@ if uploaded_file:
         if product_search:
             filtered_df = filtered_df[filtered_df["Product"].str.contains(product_search, case=False)]
 
-        if show_top_growth:
-            filtered_df = filtered_df.sort_values("Growth_%", ascending=False).head(10)
-        if show_top_forecast:
-            filtered_df = filtered_df.sort_values("Total_Forecast_30d", ascending=False).head(10)
+        if sort_option == "Top Gainers (Growth %)":
+            filtered_df = filtered_df.sort_values("Growth_%", ascending=False).head(top_n)
+        elif sort_option == "Top Losers (Growth %)":
+            filtered_df = filtered_df.sort_values("Growth_%", ascending=True).head(top_n)
+        elif sort_option == "Top Forecast (30 Days)":
+            filtered_df = filtered_df.sort_values("Total_Forecast_30d", ascending=False).head(top_n)
 
     gb = GridOptionsBuilder.from_dataframe(filtered_df)
     gb.configure_pagination()
@@ -107,20 +113,6 @@ if uploaded_file:
     AgGrid(filtered_df, gridOptions=gb.build(), theme='material')
 
     st.download_button("📥 Download CSV", data=filtered_df.to_csv(index=False), file_name="forecast_summary.csv")
-
-    st.subheader("📉 Growth % Distribution")
-    fig1, ax1 = plt.subplots()
-    ax1.hist(filtered_df["Growth_%"], bins=15, edgecolor='black')
-    ax1.set_title("Histogram of Growth %")
-    ax1.set_xlabel("Growth %")
-    ax1.set_ylabel("Frequency")
-    st.pyplot(fig1)
-
-    st.subheader("📦 Forecast Volume Spread")
-    fig2, ax2 = plt.subplots()
-    ax2.boxplot(filtered_df["Total_Forecast_30d"], vert=False)
-    ax2.set_title("Boxplot of Total Forecast (30 Days)")
-    st.pyplot(fig2)
 
     st.subheader("📈 Forecast Visualization")
     selectable = filtered_df["Product"] + " - " + filtered_df["Factory"]
@@ -140,14 +132,24 @@ if uploaded_file:
         future_ordinals = future_dates.map(pd.Timestamp.toordinal).values.reshape(-1, 1)
         y_pred = model.predict(future_ordinals)
 
+        # Historical + Forecast Chart
         plt.figure(figsize=(10, 4))
         plt.plot(group["ds"], y, label="Historical")
         plt.plot(future_dates, y_pred, label="Forecast", linestyle="--")
-        plt.title(f"Forecast: {prod} - {fact}")
+        plt.title(f"Historical + Forecast: {prod} - {fact}")
         plt.xlabel("Date")
         plt.ylabel("Quantity Sold")
         plt.legend()
         st.pyplot(plt)
+
+        # Forecast Only Chart
+        fig3, ax3 = plt.subplots(figsize=(10, 4))
+        ax3.plot(future_dates, y_pred, marker='o')
+        ax3.set_title(f"📅 Next 30-Day Forecast: {prod} - {fact}")
+        ax3.set_xlabel("Future Date")
+        ax3.set_ylabel("Predicted Quantity Sold")
+        ax3.grid(True)
+        st.pyplot(fig3)
 
 else:
     st.info("📥 Upload a CSV file to begin.")
