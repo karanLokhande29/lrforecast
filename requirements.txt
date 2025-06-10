@@ -1,5 +1,5 @@
 streamlit
 pandas
 matplotlib
+streamlit-aggrid
 scikit-learn
-st-aggrid
