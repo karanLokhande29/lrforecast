@@ -54,17 +54,21 @@ if uploaded_zip:
             gb_all.configure_default_column(filterable=True, sortable=True, resizable=True)
             AgGrid(filtered_data, gridOptions=gb_all.build(), theme='material')
 
+            st.download_button("📤 Download Current Month Data", data=filtered_data.to_csv(index=False), file_name=f"sales_data_{selected_month.replace(' ', '_')}.csv")
+
             total_cost = filtered_data["Sales_Value"].sum()
             st.markdown(f"### 💰 Total Sales Value: ₹{total_cost:,.2f}")
 
-            current_df = dfs[all_dates[-1]]
-            prev_df = dfs[all_dates[-2]]
+            current_df = dfs[all_dates[-1]].copy()
+            prev_df = dfs[all_dates[-2]].copy()
+
+            current_df = current_df.rename(columns={"Quantity_Sold": "Quantity_Sold_curr", "Sales_Value": "Sales_Value_curr"})
+            prev_df = prev_df.rename(columns={"Quantity_Sold": "Quantity_Sold_prev", "Sales_Value": "Sales_Value_prev"})
 
             merged = pd.merge(
-                current_df,
-                prev_df,
+                current_df[["Product_Name", "Quantity_Sold_curr", "Sales_Value_curr"]],
+                prev_df[["Product_Name", "Quantity_Sold_prev", "Sales_Value_prev"]],
                 on="Product_Name",
-                suffixes=("_curr", "_prev"),
                 how="outer"
             ).fillna(0)
 
@@ -84,7 +88,6 @@ if uploaded_zip:
             merged["Alert"] = merged["Growth_Quantity_%"].apply(label_growth)
 
             st.subheader(f"📊 Comparison: {all_dates[-2].strftime('%B %Y')} ➡ {all_dates[-1].strftime('%B %Y')}")
-
             gb = GridOptionsBuilder.from_dataframe(merged)
             gb.configure_pagination()
             gb.configure_default_column(filterable=True, sortable=True, resizable=True)
@@ -93,7 +96,17 @@ if uploaded_zip:
 
             st.download_button("📥 Download Comparison CSV", data=merged.to_csv(index=False), file_name="monthly_comparison.csv")
 
-            st.subheader("📈 Forecast Next 30 Days (Quantity)")
+            # 📈 Product-wise trendlines over months
+            st.subheader("📊 Product-wise Monthly Sales Trends")
+            pivot = combined_df.pivot_table(index="Date", columns="Product_Name", values="Quantity_Sold", aggfunc="sum")
+            fig_trend, ax_trend = plt.subplots(figsize=(10, 5))
+            pivot.plot(ax=ax_trend)
+            ax_trend.set_title("Monthly Sales Trend by Product")
+            ax_trend.set_ylabel("Quantity Sold")
+            st.pyplot(fig_trend)
+
+            # 🔮 Forecasting per product
+            st.subheader("🔮 Forecast Next 30 Days (Per Product)")
             history = combined_df.groupby(["Date", "Product_Name"])["Quantity_Sold"].sum().reset_index()
             history["Date_Ordinal"] = history["Date"].map(datetime.toordinal)
 
@@ -117,12 +130,28 @@ if uploaded_zip:
             ax.legend()
             st.pyplot(fig)
 
-            # Predict total sales value for next month
-            recent_month = history[history["Product_Name"] == selected_product]["Date"].max()
-            future_month_date = recent_month + pd.DateOffset(months=1)
+            forecast_df = pd.DataFrame({"Date": future_dates, "Predicted_Quantity": forecast})
+            st.download_button("📥 Download Forecast (Selected Product)", data=forecast_df.to_csv(index=False), file_name=f"{selected_product}_forecast.csv")
+
+            future_month_date = prod_data["Date"].max() + pd.DateOffset(months=1)
             month_ord = future_month_date.toordinal()
             predicted_qty = model.predict(np.array([[month_ord]]))[0]
+            st.markdown(f"### 📌 Predicted Quantity for {selected_product} in {future_month_date.strftime('%B %Y')}: `{int(predicted_qty):,}` units")
 
-            st.markdown(f"### 🔮 Predicted Quantity for {selected_product} in {future_month_date.strftime('%B %Y')}: `{int(predicted_qty):,}` units")
+            # 📦 Grouped Forecast for All Products
+            st.subheader("📦 Forecast Summary for All Products")
+            all_forecast = []
+            for product in sorted(history["Product_Name"].unique()):
+                prod_hist = history[history["Product_Name"] == product].sort_values("Date")
+                if len(prod_hist) >= 2:
+                    model_all = LinearRegression()
+                    model_all.fit(prod_hist[["Date_Ordinal"]], prod_hist["Quantity_Sold"])
+                    month_ord = (prod_hist["Date"].max() + pd.DateOffset(months=1)).toordinal()
+                    predicted = model_all.predict(np.array([[month_ord]]))[0]
+                    all_forecast.append({"Product_Name": product, "Forecasted_30d_Quantity": round(predicted)})
+
+            forecast_summary_df = pd.DataFrame(all_forecast)
+            AgGrid(forecast_summary_df)
+            st.download_button("📦 Download Forecast Summary", data=forecast_summary_df.to_csv(index=False), file_name="forecast_summary_all_products.csv")
 else:
     st.info("📤 Please upload a ZIP file with at least two Excel sheets. Filenames should end with '_may_2025.xlsx', '_june_2025.xlsx', etc.")
