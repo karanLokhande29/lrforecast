@@ -4,8 +4,7 @@ import matplotlib.pyplot as plt
 from st_aggrid import AgGrid, GridOptionsBuilder
 import streamlit as st
 import logging, warnings
-import zipfile, os
-from io import BytesIO
+import zipfile
 from datetime import datetime
 from sklearn.linear_model import LinearRegression
 
@@ -29,7 +28,7 @@ if uploaded_zip:
                         df["Date"] = date
                         dfs[date] = df
                     except:
-                        st.warning(f"⚠️ Could not parse date from file: {name}")
+                        st.warning(f"⚠️ Could not parse date from file: {name}. Use format like 'sales_may_2025.xlsx'")
                 else:
                     st.warning(f"❌ Skipping file '{name}' — missing required columns.")
 
@@ -59,6 +58,7 @@ if uploaded_zip:
             total_cost = filtered_data["Sales_Value"].sum()
             st.markdown(f"### 💰 Total Sales Value: ₹{total_cost:,.2f}")
 
+            # Comparison between last 2 months
             current_df = dfs[all_dates[-1]].copy()
             prev_df = dfs[all_dates[-2]].copy()
 
@@ -96,62 +96,64 @@ if uploaded_zip:
 
             st.download_button("📥 Download Comparison CSV", data=merged.to_csv(index=False), file_name="monthly_comparison.csv")
 
-            # 📈 Product-wise trendlines over months
-            st.subheader("📊 Product-wise Monthly Sales Trends")
-            pivot = combined_df.pivot_table(index="Date", columns="Product_Name", values="Quantity_Sold", aggfunc="sum")
-            fig_trend, ax_trend = plt.subplots(figsize=(10, 5))
-            pivot.plot(ax=ax_trend)
-            ax_trend.set_title("Monthly Sales Trend by Product")
-            ax_trend.set_ylabel("Quantity Sold")
-            st.pyplot(fig_trend)
-
-            # 🔮 Forecasting per product
-            st.subheader("🔮 Forecast Next 30 Days (Per Product)")
-            history = combined_df.groupby(["Date", "Product_Name"])["Quantity_Sold"].sum().reset_index()
-            history["Date_Ordinal"] = history["Date"].map(datetime.toordinal)
-
-            selected_product = st.selectbox("Choose Product for Forecasting", sorted(history["Product_Name"].unique()))
-            prod_data = history[history["Product_Name"] == selected_product].sort_values("Date")
-
-            model = LinearRegression()
-            X = prod_data[["Date_Ordinal"]]
-            y = prod_data["Quantity_Sold"]
-            model.fit(X, y)
-
-            future_dates = pd.date_range(start=prod_data["Date"].max() + pd.DateOffset(days=1), periods=30)
-            future_ordinals = future_dates.map(datetime.toordinal).values.reshape(-1, 1)
-            forecast = model.predict(future_ordinals)
+            # 📊 Product-wise Monthly Trend
+            st.subheader("📊 Product-wise Monthly Trend")
+            selected_prod = st.selectbox("Select Product for Trendline", sorted(combined_df["Product_Name"].unique()))
+            trend_data = combined_df[combined_df["Product_Name"] == selected_prod].groupby("Date")[["Quantity_Sold", "Sales_Value"]].sum().reset_index()
 
             fig, ax = plt.subplots(figsize=(10, 4))
-            ax.plot(prod_data["Date"], y, label="Historical")
-            ax.plot(future_dates, forecast, label="Forecast (30d)")
-            ax.set_title(f"30-Day Forecast: {selected_product}")
-            ax.set_ylabel("Quantity Sold")
+            ax.plot(trend_data["Date"], trend_data["Quantity_Sold"], marker="o", label="Quantity Sold")
+            ax.plot(trend_data["Date"], trend_data["Sales_Value"], marker="x", label="Sales Value (₹)")
+            ax.set_title(f"Trendline for {selected_prod}")
+            ax.set_ylabel("Amount")
             ax.legend()
             st.pyplot(fig)
 
-            forecast_df = pd.DataFrame({"Date": future_dates, "Predicted_Quantity": forecast})
-            st.download_button("📥 Download Forecast (Selected Product)", data=forecast_df.to_csv(index=False), file_name=f"{selected_product}_forecast.csv")
+            # 🔮 Forecasting for selected product
+            st.subheader("🔮 Forecast Next 30 Days (Selected Product)")
+            history = combined_df.groupby(["Date", "Product_Name"]).agg({"Quantity_Sold": "sum", "Sales_Value": "sum"}).reset_index()
+            history["Date_Ordinal"] = history["Date"].map(datetime.toordinal)
 
-            future_month_date = prod_data["Date"].max() + pd.DateOffset(months=1)
-            month_ord = future_month_date.toordinal()
-            predicted_qty = model.predict(np.array([[month_ord]]))[0]
-            st.markdown(f"### 📌 Predicted Quantity for {selected_product} in {future_month_date.strftime('%B %Y')}: `{int(predicted_qty):,}` units")
+            selected_forecast_prod = st.selectbox("Product for Forecast", sorted(history["Product_Name"].unique()))
+            hist = history[history["Product_Name"] == selected_forecast_prod].sort_values("Date")
+            model = LinearRegression()
+            model.fit(hist[["Date_Ordinal"]], hist["Quantity_Sold"])
+            future_dates = pd.date_range(start=hist["Date"].max() + pd.Timedelta(days=1), periods=30)
+            forecast_qty = model.predict(future_dates.map(datetime.toordinal).values.reshape(-1, 1))
 
-            # 📦 Grouped Forecast for All Products
+            fig, ax = plt.subplots(figsize=(10, 4))
+            ax.plot(hist["Date"], hist["Quantity_Sold"], label="Historical")
+            ax.plot(future_dates, forecast_qty, label="Forecast")
+            ax.set_title(f"30-Day Forecast: {selected_forecast_prod}")
+            ax.set_ylabel("Quantity")
+            ax.legend()
+            st.pyplot(fig)
+
+            forecast_df = pd.DataFrame({"Date": future_dates, "Predicted_Quantity": forecast_qty})
+            st.download_button("📥 Download Forecast (Selected Product)", forecast_df.to_csv(index=False), file_name=f"{selected_forecast_prod}_forecast.csv")
+
+            # 📦 Forecast summary for all products
             st.subheader("📦 Forecast Summary for All Products")
-            all_forecast = []
-            for product in sorted(history["Product_Name"].unique()):
-                prod_hist = history[history["Product_Name"] == product].sort_values("Date")
-                if len(prod_hist) >= 2:
-                    model_all = LinearRegression()
-                    model_all.fit(prod_hist[["Date_Ordinal"]], prod_hist["Quantity_Sold"])
-                    month_ord = (prod_hist["Date"].max() + pd.DateOffset(months=1)).toordinal()
-                    predicted = model_all.predict(np.array([[month_ord]]))[0]
-                    all_forecast.append({"Product_Name": product, "Forecasted_30d_Quantity": round(predicted)})
+            all_forecasts = []
+            for prod in sorted(history["Product_Name"].unique()):
+                hist_prod = history[history["Product_Name"] == prod]
+                if len(hist_prod) >= 2:
+                    model_qty = LinearRegression()
+                    model_val = LinearRegression()
+                    model_qty.fit(hist_prod[["Date_Ordinal"]], hist_prod["Quantity_Sold"])
+                    model_val.fit(hist_prod[["Date_Ordinal"]], hist_prod["Sales_Value"])
+                    target_date = hist_prod["Date"].max() + pd.DateOffset(months=1)
+                    ordinal = target_date.toordinal()
+                    qty_pred = model_qty.predict(np.array([[ordinal]]))[0]
+                    val_pred = model_val.predict(np.array([[ordinal]]))[0]
+                    all_forecasts.append({
+                        "Product_Name": prod,
+                        "Forecasted_30d_Quantity": round(qty_pred),
+                        "Forecasted_Sales_Value": round(val_pred, 2)
+                    })
 
-            forecast_summary_df = pd.DataFrame(all_forecast)
+            forecast_summary_df = pd.DataFrame(all_forecasts)
             AgGrid(forecast_summary_df)
-            st.download_button("📦 Download Forecast Summary", data=forecast_summary_df.to_csv(index=False), file_name="forecast_summary_all_products.csv")
+            st.download_button("📥 Download Forecast Summary (All Products)", data=forecast_summary_df.to_csv(index=False), file_name="forecast_summary_all_products.csv")
 else:
-    st.info("📤 Please upload a ZIP file with at least two Excel sheets. Filenames should end with '_may_2025.xlsx', '_june_2025.xlsx', etc.")
+    st.info("📤 Please upload a ZIP file with Excel sheets named like 'sales_april_2025.xlsx', 'sales_may_2025.xlsx', etc.")
