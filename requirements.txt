@@ -2,4 +2,5 @@ streamlit
 pandas
 matplotlib
 streamlit-aggrid
+openpyxl
 scikit-learn
