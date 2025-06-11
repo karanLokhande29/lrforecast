@@ -4,47 +4,46 @@ import matplotlib.pyplot as plt
 from st_aggrid import AgGrid, GridOptionsBuilder
 import streamlit as st
 import logging, warnings
-import calendar
+import zipfile, os
+from io import BytesIO
+from datetime import datetime
 
 warnings.filterwarnings("ignore")
 st.set_page_config(page_title="📊 Monthly Sales Comparison Dashboard", layout="wide")
-st.title("📈 Monthly Sales Spike/Drop Detector")
+st.title("📈 Multi-Month Sales Spike/Drop Detector")
 
-uploaded_file = st.file_uploader("Upload your monthly sales Excel file", type="xlsx")
+uploaded_zip = st.file_uploader("Upload a ZIP file containing monthly Excel sheets", type="zip")
 
-if uploaded_file:
-    df = pd.read_excel(uploaded_file)
+if uploaded_zip:
+    with zipfile.ZipFile(uploaded_zip) as z:
+        # Extract Excel files to memory
+        dfs = {}
+        for name in z.namelist():
+            if name.endswith(".xlsx"):
+                df = pd.read_excel(z.open(name))
+                if {"Product_Name", "Quantity_Sold", "Sales_Value"}.issubset(df.columns):
+                    # Try to extract date from filename
+                    try:
+                        parts = name.replace(".xlsx", "").split("_")
+                        month_year = parts[-2] + " " + parts[-1]  # e.g., may 2025
+                        date = pd.to_datetime(month_year, format="%B %Y")
+                        df["Date"] = date
+                        dfs[date] = df
+                    except:
+                        st.warning(f"⚠️ Could not parse date from file: {name}")
+                else:
+                    st.warning(f"❌ Skipping file '{name}' — missing required columns.")
 
-    # Ensure proper column names exist
-    required_cols = {"Product_Name", "Quantity_Sold", "Sales_Value"}
-    if not required_cols.issubset(df.columns):
-        st.error(f"❌ Uploaded file must contain these columns: {required_cols}")
-    else:
-        # User input for current and previous month
-        current_month = st.text_input("📅 Enter Current Month (e.g., May 2025)", "May 2025")
+        if len(dfs) < 2:
+            st.error("❗ Upload at least two valid monthly Excel sheets to compare.")
+        else:
+            # Sort by date and get latest two
+            all_dates = sorted(dfs.keys())
+            current_df = dfs[all_dates[-1]]
+            prev_df = dfs[all_dates[-2]]
 
-        try:
-            # Parse user input
-            selected_date = pd.to_datetime(current_month, format="%B %Y")
-            prev_date = selected_date - pd.DateOffset(months=1)
-
-            # Add artificial Date column
-            df["Date"] = selected_date
-
-            # Simulate previous month data (for demo or real merge in production use)
-            hist_path = f"sales_data_{prev_date.strftime('%Y_%m')}.csv"
-            try:
-                prev_df = pd.read_csv(hist_path)
-            except FileNotFoundError:
-                st.warning(f"⚠️ Previous month file '{hist_path}' not found. Upload it in advance to enable comparison.")
-                prev_df = pd.DataFrame(columns=["Product_Name", "Quantity_Sold", "Sales_Value"])
-
-            # Add previous date column for consistency
-            prev_df["Date"] = prev_date
-
-            # Merge and compare
             merged = pd.merge(
-                df,
+                current_df,
                 prev_df,
                 on="Product_Name",
                 suffixes=("_curr", "_prev"),
@@ -66,8 +65,7 @@ if uploaded_file:
 
             merged["Alert"] = merged["Growth_Quantity_%"].apply(label_growth)
 
-            # Display dashboard
-            st.subheader("🧾 Monthly Summary Table")
+            st.subheader(f"🧾 Comparison: {all_dates[-2].strftime('%B %Y')} ➡ {all_dates[-1].strftime('%B %Y')}")
 
             gb = GridOptionsBuilder.from_dataframe(merged)
             gb.configure_pagination()
@@ -88,8 +86,5 @@ if uploaded_file:
                 ax.set_title(f"Quantity Comparison: {selected}")
                 ax.legend()
                 st.pyplot(fig)
-
-        except ValueError:
-            st.error("❌ Please enter the current month in the format 'Month YYYY', e.g., 'May 2025'")
 else:
-    st.info("📤 Please upload your Excel sheet with sales data in the correct format: Product_Name, Quantity_Sold, Sales_Value")
+    st.info("📤 Please upload a ZIP file with at least two Excel sheets. Filenames should end with '_may_2025.xlsx', '_june_2025.xlsx', etc.")
