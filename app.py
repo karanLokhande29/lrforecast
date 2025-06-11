@@ -58,6 +58,7 @@ if uploaded_zip:
             total_cost = filtered_data["Sales_Value"].sum()
             st.markdown(f"### 💰 Total Sales Value: ₹{total_cost:,.2f}")
 
+            # Comparison between last 2 months
             current_df = dfs[all_dates[-1]].copy()
             prev_df = dfs[all_dates[-2]].copy()
 
@@ -95,6 +96,7 @@ if uploaded_zip:
 
             st.download_button("📥 Download Comparison CSV", data=merged.to_csv(index=False), file_name="monthly_comparison.csv")
 
+            # 📊 Product-wise Monthly Trend
             st.subheader("📊 Product-wise Monthly Trend")
             selected_prod = st.selectbox("Select Product for Trendline", sorted(combined_df["Product_Name"].unique()))
             trend_data = combined_df[combined_df["Product_Name"] == selected_prod].groupby("Date")[["Quantity_Sold", "Sales_Value"]].sum().reset_index()
@@ -107,6 +109,7 @@ if uploaded_zip:
             ax.legend()
             st.pyplot(fig)
 
+            # 🔮 Forecasting for selected product
             st.subheader("🔮 Forecast Next 30 Days (Selected Product)")
             history = combined_df.groupby(["Date", "Product_Name"]).agg({"Quantity_Sold": "sum", "Sales_Value": "sum"}).reset_index()
             history["Date_Ordinal"] = history["Date"].map(datetime.toordinal)
@@ -129,6 +132,7 @@ if uploaded_zip:
             forecast_df = pd.DataFrame({"Date": future_dates, "Predicted_Quantity": forecast_qty})
             st.download_button("📥 Download Forecast (Selected Product)", forecast_df.to_csv(index=False), file_name=f"{selected_forecast_prod}_forecast.csv")
 
+            # 📦 Forecast summary for all products
             st.subheader("📦 Forecast Summary for All Products")
             all_forecasts = []
             for prod in sorted(history["Product_Name"].unique()):
@@ -152,7 +156,9 @@ if uploaded_zip:
             AgGrid(forecast_summary_df)
             st.download_button("📥 Download Forecast Summary (All Products)", data=forecast_summary_df.to_csv(index=False), file_name="forecast_summary_all_products.csv")
 
-            total_forecast_value = forecast_summary_df["Forecasted_Sales_Value"].sum()
-            st.markdown(f"### 💡 Total Forecasted Sales Value (30 Days): ₹{total_forecast_value:,.2f}")
+            # ✅ Display total forecasted sales value
+            if not forecast_summary_df.empty:
+                total_forecast_value = forecast_summary_df["Forecasted_Sales_Value"].sum()
+                st.markdown(f"### 💡 Total Forecasted Sales Value (30 Days): ₹{total_forecast_value:,.2f}")
 else:
     st.info("📤 Please upload a ZIP file with Excel sheets named like 'sales_april_2025.xlsx', 'sales_may_2025.xlsx', etc.")
